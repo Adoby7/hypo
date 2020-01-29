@@ -130,6 +130,14 @@ public:
 	 * */
 	bool find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result) const;
 
+	/** Finds the first/last position of the given kmer in the given range with one indel error tolerated, if any
+	 *  Range: left_ind(inclusive) to right_ind(exclusive)
+	 * 	First if is_first is set; otherwise last
+	 *  Stores index in result, if found
+	 *  Returns whether found or not
+	 * */
+	bool find_kmer_with_one_tolerance(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result) const;
+
 	/** Checks whether the kmer at the given position is same as the given kmer
 	 *  Returns whether same or not
 	 * */

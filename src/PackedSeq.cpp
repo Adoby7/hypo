@@ -288,6 +288,46 @@ bool PackedSeq<NB>::check_kmer(const UINT64 target_kmer, const UINT k, const siz
     return found;
 }
 
+bool is_matched_with_one_error(const UINT64 target, const UINT64 candidate, const UINT k) {
+    UINT64 filter = ((1ULL << 2 * (k-1)) - 1);
+    UINT64 mask = ((1ULL << 2 * (k + 1)) - 1) ^ ((1ULL << 2 * k) - 1);
+    for (int i = 0; i < (int)k - 2; ++i) {
+        UINT64 current = ((candidate & mask) >> 2) | (candidate & filter);
+        if (current == target) return true;
+        mask |= mask >> 2;
+        filter >>= 2;
+    }
+    return false;
+}
+
+template <int NB>
+bool PackedSeq<NB>::find_kmer_with_one_tolerance(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result) const {
+    assert(right_ind <= get_seq_size() && left_ind<=right_ind);
+    if (left_ind==right_ind) {return false;}
+    UINT64 kmer=0;
+    UINT kmer_len=0;
+    const UINT64 kmask = (1ULL<<2*(k+1)) - 1;
+    bool found = false;
+    for (size_t i=left_ind; i < right_ind; ++i) {
+        BYTE b = enc_base_at(i);
+        if (b < 4) { //ACGT
+            kmer = ((kmer << 2) | b) & kmask;
+            if (kmer_len<k) { ++kmer_len;}                
+        } else { // N; reset
+            kmer_len = 0;
+            kmer=0;
+        }
+        if (kmer_len==k+1 && is_matched_with_one_error(target_kmer, kmer, k)) { //found
+            result = i-k;
+            found = true;
+            if (is_first) {
+                break;
+            }
+        }
+    }
+    return found;
+}
+
 template <int NB>
 bool PackedSeq<NB>::find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result)const {
     // Assumes kmer is based on 2-bit packing

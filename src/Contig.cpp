@@ -456,44 +456,26 @@ namespace hypo
         UINT32 last_found_position = draft_seq.size() + 1; //a unique identifier for 'first minimizer'
         UINT32 MINIMIZER_K = Minimizer_settings.k;
         UINT32 MINIMIZER_W = Minimizer_settings.w;
-        UINT32 shift = 2 * (Minimizer_settings.k - 1);
         UINT32 mask = (1ULL<<2*MINIMIZER_K) - 1;
-        UINT32 kmer[2] = {0,0};
-        MinimizerDeque<UINT32> minimizer_window(MINIMIZER_W + 1);
+        UINT32 kmer = 0;
         UINT32 count_not_N = 0;
         UINT32 processed_kmer = 0;
-        UINT32 current_start_position = 0;
         
         //we have to make a vector of found minimizers and a map to validity, to handle duplicates
         //is there a better solution?
         std::vector<UINT32> found_minimizers;
         std::vector<UINT32> found_minimizers_positions;
-        std::unordered_map<UINT32, UINT8> counter;
         
         for(size_t i = 0; i < draft_seq.size(); ++i) {
             BYTE c = cNt4Table[(BYTE)draft_seq[i]];
             if(c < 4) {
                 ++count_not_N;
                 
-                kmer[0] = (kmer[0] << 2ull | c) & mask;           // forward k-mer
-                //kmer[1] = (kmer[1] >> 2ull) | (3ULL^c) << shift; // reverse k-mer
-                //int z = kmer[0] < kmer[1] ? 0 : 1;
-                int z=0;
+                kmer = (kmer << 2ull | c) & mask;           // forward k-mer
                 if(count_not_N >= MINIMIZER_K) {
-                    while(!minimizer_window.empty() && std::get<0>(minimizer_window.back()) > kmer[z]) minimizer_window.pop_back();
-                    minimizer_window.push_back(std::make_tuple(kmer[z], i));
-                    while(std::get<1>(minimizer_window.front()) + MINIMIZER_W <= i) minimizer_window.pop_front();
-                    ++processed_kmer;
-                    if(processed_kmer >= MINIMIZER_W) {
-                        current_start_position = std::get<1>(minimizer_window.front()) - MINIMIZER_K + 1;
-                        if(current_start_position != last_found_position) { //first minimizer
-                            found_minimizers_positions.push_back(current_start_position);
-                            found_minimizers.push_back(std::get<0>(minimizer_window.front()));
-                            ++counter[std::get<0>(minimizer_window.front())];
-                        }
-                        last_found_position = current_start_position;
-                    }
-                    
+                    auto current_start_position = (int) i + 1 - MINIMIZER_K;
+                    found_minimizers_positions.push_back(current_start_position);
+                    found_minimizers.push_back(kmer);
                 }
             } else {
                 count_not_N = 0;
@@ -505,25 +487,61 @@ namespace hypo
         _minimserinfo[minfoind]->minimisers.reserve(found_minimizers.size());
         _minimserinfo[minfoind]->rel_pos.reserve(found_minimizers.size());
         for(size_t i = 0; i < found_minimizers.size(); ++i) {
-            if(counter[found_minimizers[i]] == 1) { //unique minimizer
-                auto p = found_minimizers_positions[i];
-                //if (draft_seq[p]!=draft_seq[p+1] && draft_seq[p+MINIMIZER_K-1]!=draft_seq[p+MINIMIZER_K-2]) { // doesn't have HP at terminals
-                if (found_minimizers[i]!=Minimizer_settings.polyA && found_minimizers[i]!=Minimizer_settings.polyC && found_minimizers[i]!=Minimizer_settings.polyG && found_minimizers[i]!=Minimizer_settings.polyT) {
-                    if ( found_minimizers_positions[i] - last_found_position > MAX_U16_LIMIT) {
-                        fprintf(stderr, "[Hypo::Contig] Error: Length exceed limit: The distance between consecutive minimisers within a window is %u which exceeds the limit of %u !\n",found_minimizers_positions[i] - last_found_position,MAX_LEN_LIMIT);
-                        exit(1);
-                    }
-                    _minimserinfo[minfoind]->minimisers.push_back(found_minimizers[i]);
-                    _minimserinfo[minfoind]->rel_pos.push_back(found_minimizers_positions[i] - last_found_position);
-                    last_found_position = found_minimizers_positions[i];
+            if (found_minimizers[i]!=Minimizer_settings.polyA && found_minimizers[i]!=Minimizer_settings.polyC && found_minimizers[i]!=Minimizer_settings.polyG && found_minimizers[i]!=Minimizer_settings.polyT) {
+                if ( found_minimizers_positions[i] - last_found_position > MAX_U16_LIMIT) {
+                    fprintf(stderr, "[Hypo::Contig] Error: Length exceed limit: The distance between consecutive minimisers within a window is %u which exceeds the limit of %u !\n",found_minimizers_positions[i] - last_found_position,MAX_LEN_LIMIT);
+                    exit(1);
                 }
+                _minimserinfo[minfoind]->minimisers.push_back(found_minimizers[i]);
+                _minimserinfo[minfoind]->rel_pos.push_back(found_minimizers_positions[i]);
+                last_found_position = found_minimizers_positions[i];
             }
+      
         }
         _minimserinfo[minfoind]->minimisers.shrink_to_fit();
         _minimserinfo[minfoind]->rel_pos.shrink_to_fit();
         auto num_minimisers = _minimserinfo[minfoind]->rel_pos.size();
         _minimserinfo[minfoind]->support.resize(num_minimisers,0);
         _minimserinfo[minfoind]->coverage.resize(num_minimisers,0);
+    }
+
+    UINT32 binary_search(const std::vector<UINT16>& v, UINT32 left, UINT32 right, const UINT32 target) {
+        while(left < right) {
+            UINT32 mid = (left + right) / 2;
+            if (v[mid] == target) return mid;
+            else if (v[mid] > target) right = mid - 1;
+            else left = mid + 1;
+        }
+        return left;
+    }
+
+    void find_division_points(std::vector<UINT32>& kmers, std::vector<UINT32>& kmers_pos, std::unique_ptr<MWMinimiserInfo>& kmer_info, const UINT32 beg, const UINT32 end, const UINT32 left_id, const UINT32 right_id) {
+        UINT32 MINIMIZER_K = Minimizer_settings.k;
+        if (end - beg <= MINIMIZER_K || right_id < left_id) return;
+        UINT32 target_pos = (beg + end + 1 - MINIMIZER_K) / 2;
+        UINT32 left_bound = (target_pos < MINIMIZER_K ? 0 : target_pos - MINIMIZER_K);
+        UINT32 right_bound = (target_pos + 2 * MINIMIZER_K > end ? end : target_pos + 2 * MINIMIZER_K);
+        UINT32 raw_divide_id = binary_search(kmer_info->rel_pos, left_id, right_id, target_pos);
+        UINT32 divide_id = raw_divide_id;
+        UINT32 max_support = kmer_info->support[raw_divide_id];
+        for (int i = raw_divide_id; i >= left_id && i <= right_id && kmer_info->rel_pos[i] >= left_bound; i--) {
+            if (max_support < kmer_info->support[i]) {
+                divide_id = i;
+                max_support = kmer_info->support[i];
+            }
+        }
+        for (int i = raw_divide_id; i <= right_id && kmer_info->rel_pos[i] + MINIMIZER_K - 1 <= right_bound; ++i) {
+            if (max_support < kmer_info->support[i]) {
+                divide_id = i;
+                max_support = kmer_info->support[i];
+            }
+        }
+        if(kmer_info->rel_pos[divide_id] >= beg && kmer_info->rel_pos[divide_id] <= end) {
+            kmers.push_back(kmer_info->minimisers[divide_id]);
+            kmers_pos.push_back(kmer_info->rel_pos[divide_id]);
+        }
+        if (divide_id > 0 && kmer_info->rel_pos[divide_id] > 0) find_division_points(kmers, kmers_pos, kmer_info, beg, kmer_info->rel_pos[divide_id] - 1, left_id, divide_id - 1);
+        find_division_points(kmers, kmers_pos, kmer_info, kmer_info->rel_pos[divide_id] + MINIMIZER_K, end, divide_id + 1, right_id);
     }
         
     void Contig::divide(const UINT32 reg_index, const UINT32 beg, const UINT32 end, char pvs, char nxt) { 
@@ -539,17 +557,12 @@ namespace hypo
         supp_pos.reserve(num_minimsers);
         std::vector<UINT32> supp_minimisers;
         supp_minimisers.reserve(num_minimsers);
-        
-        for (UINT32 mi=0; mi< num_minimsers; ++mi) {
-            minimiser_pos += _minimserinfo[minfoidx]->rel_pos[mi]; // absolute pos
-            if (_minimserinfo[minfoidx]->coverage[mi]>=Minimizer_settings.cov_th) { 
-                UINT supp_th = UINT(Minimizer_settings.supp_frac*_minimserinfo[minfoidx]->coverage[mi]);
-                if (_minimserinfo[minfoidx]->support[mi]>=supp_th && (minimiser_pos+MINIMIZER_K<end)) { // supported minimiser found which is not adjacent to next sr
-                    supp_pos.push_back(minimiser_pos);
-                    supp_minimisers.push_back(_minimserinfo[minfoidx]->minimisers[mi]);
-                } 
-            }
+
+        find_division_points(supp_minimisers, supp_pos, _minimserinfo[minfoidx], 0, end-beg, 0, num_minimsers-1);
+        for (UINT32& p: supp_pos) {
+            p += beg;
         }
+        
         ////// Find Minimser-based window cutting pos
         UINT remaining_size = end-beg;
         auto start = beg;
@@ -565,7 +578,7 @@ namespace hypo
         }
 
         /////////// Create windows
-        UINT32 num_minimiser_windows=cut_minimiser_index.size();
+        UINT32 num_minimiser_windows=supp_pos.size();
         if (num_minimiser_windows==0) { // Only window
             if (end > beg + cToo_large) { // force break
                 force_divide(beg,end,pvs,nxt);
@@ -581,7 +594,7 @@ namespace hypo
         }
         else { // at least one minimser
             // First window
-            UINT32 win_end = supp_pos[cut_minimiser_index[0]];
+            UINT32 win_end = supp_pos[0];
             if (win_end > beg + cToo_large) { // force break
                 force_divide(beg,win_end,pvs,'m');
             }
@@ -593,14 +606,14 @@ namespace hypo
             }
             // internal windows (pvs window set at the beginning of a minimser)
             for (UINT32 cmi=1; cmi< num_minimiser_windows; ++cmi) {
-                UINT32 pvs_mi = cut_minimiser_index[cmi-1];
+                UINT32 pvs_mi = cmi-1;
                 // Mark minimser window;
                 _reg_pos[supp_pos[pvs_mi]] = 1;
                 _reg_info.emplace_back(supp_minimisers[pvs_mi]);
                 _reg_type.emplace_back(RegionType::MSR);
                 // Window following the MSR
                 UINT32 win_start = supp_pos[pvs_mi]+MINIMIZER_K;
-                UINT32 win_end = supp_pos[cut_minimiser_index[cmi]];
+                UINT32 win_end = supp_pos[cmi];
                 if (win_end > cToo_large+win_start) { // this window is too large
                     force_divide(win_start,win_end,'m','m');
                 }
@@ -611,7 +624,7 @@ namespace hypo
                 }
             }
             // Last window
-            UINT32 pvs_mi = cut_minimiser_index[num_minimiser_windows-1];
+            UINT32 pvs_mi = num_minimiser_windows-1;
             // Mark minimser window;
             _reg_pos[supp_pos[pvs_mi]] = 1;
             _reg_info.emplace_back(supp_minimisers[pvs_mi]);
@@ -713,7 +726,27 @@ namespace hypo
         }
     }  
 
+    void Contig::remove_unqualified_kmers() {
+        const double threshold = 0.3;
+        for (auto& window: _minimserinfo) {
+            size_t cur_index = 0;
+            for (size_t i = 0; i < window->minimisers.size(); ++i) {
+                if (1.0 * window->support[i] / window->coverage[i] < threshold) {
+                    continue;
+                }
+                window->minimisers[cur_index] = window->minimisers[i];
+                window->rel_pos[cur_index] = window->rel_pos[i];
+                window->support[cur_index] = window->support[i];
+                window->coverage[cur_index] = window->coverage[i];
+                cur_index++;
+            }
+            window->minimisers.resize(cur_index);
+            window->rel_pos.resize(cur_index);
+            window->support.resize(cur_index);
+            window->coverage.resize(cur_index);
 
+        }
+    }
     
     
 

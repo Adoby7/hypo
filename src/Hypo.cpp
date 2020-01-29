@@ -168,6 +168,12 @@ void Hypo::polish() {
             }            
         }  
         _monitor.stop("[Hypo:Hypo]: Minimisers support update. ");
+
+        _monitor.start();
+        for (UINT64 i = initial_cid; i < final_cid; ++i) {
+            _contigs[i]->remove_unqualified_kmers();
+        }
+        _monitor.stop("[Hypo::Hypo]: Remove unqualified kmers");
         
         _monitor.start();
         #pragma omp parallel for schedule(static,1) 

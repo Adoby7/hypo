@@ -83,6 +83,8 @@ public:
     // This will set the ds associated with long-windows; Called before long-arm filling.
     void prepare_long_windows();
 
+    // This function removes all kmers whose support less than threshold (0.3)
+    void remove_unqualified_kmers();
 
     /** This will first fill arms into long windows
      * Then destroy ds associated with long-windows; Called after long-arm preparing.

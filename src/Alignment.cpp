@@ -121,7 +121,6 @@ void Alignment::update_solidkmers_support (const UINT k, Contig& contig) {
 
 void Alignment::update_minimisers_support (Contig& contig) {
     UINT MINIMIZER_K = Minimizer_settings.k;
-    UINT MINIMIZER_W = Minimizer_settings.w;
     /* Find starting and ending region */
     // Rank(i) returns number of set nits in [0, i). Therefore look for _rb+1 so that index of starting region can be deduced by subtracting 1.
     auto first = contig._RMreg_pos(_rb+1)-1;
@@ -132,15 +131,11 @@ void Alignment::update_minimisers_support (Contig& contig) {
 
     // Update minimser support
     if (last_windex >= first_windex) {
-        // Find minimsers
-        UINT32 last_found_position = _apseq.get_seq_size() + 1; //a unique identifier for 'first minimizer'
-        
+        // Find minimsers        
         UINT32 shift = 2 * (MINIMIZER_K - 1);
         UINT32 mask = (1ULL<<2*MINIMIZER_K) - 1;
-        UINT32 kmer[2] = {0,0};
-        MinimizerDeque<UINT32> minimizer_window(MINIMIZER_W + 1);
+        UINT32 kmer = 0;
         UINT32 count_not_N = 0;
-        UINT32 processed_kmer = 0;
         UINT32 current_start_position = 0;
         
         //we have to make a vector of found minimizers and a map to validity, to handle duplicates
@@ -151,22 +146,10 @@ void Alignment::update_minimisers_support (Contig& contig) {
             BYTE c = _apseq.enc_base_at(i);
             if(c < 4) {
                 ++count_not_N;                
-                kmer[0] = (kmer[0] << 2ull | c) & mask;           // forward k-mer
-                //kmer[1] = (kmer[1] >> 2ull) | (3ULL^c) << shift; // reverse k-mer
-                //int z = kmer[0] < kmer[1] ? 0 : 1;
-                int z = 0;
+                kmer = (kmer << 2ull | c) & mask;           // forward k-mer
                 if(count_not_N >= MINIMIZER_K) {
-                    while(!minimizer_window.empty() && std::get<0>(minimizer_window.back()) > kmer[z]) minimizer_window.pop_back();
-                    minimizer_window.push_back(std::make_tuple(kmer[z], i));
-                    while(std::get<1>(minimizer_window.front()) + MINIMIZER_W <= i) minimizer_window.pop_front();
-                    ++processed_kmer;
-                    if(processed_kmer >= MINIMIZER_W) {
-                        current_start_position = std::get<1>(minimizer_window.front()) - MINIMIZER_K + 1;
-                        if(current_start_position != last_found_position) { //first minimizer
-                            found_minimizers.insert({std::get<0>(minimizer_window.front()),current_start_position});
-                        }
-                        last_found_position = current_start_position;
-                    }                    
+                    current_start_position = (int)i + 1 - MINIMIZER_K;
+                    found_minimizers.emplace(kmer, current_start_position);                
                 }
             } else {
                 count_not_N = 0;
@@ -179,9 +162,9 @@ void Alignment::update_minimisers_support (Contig& contig) {
             UINT32 minfoidx = (contig._is_win_even) ? (i/2) : ((i-1)/2);
             auto num_minimsers = contig._minimserinfo[minfoidx]->rel_pos.size();
             // NOTE SELECT query's index is 1-based
-            auto minimiser_pos = contig._SMreg_pos(i+1);         
+            auto minimiser_pos_base = contig._SMreg_pos(i+1);         
             for (UINT32 mi=0; mi< num_minimsers; ++mi) {
-                minimiser_pos+=contig._minimserinfo[minfoidx]->rel_pos[mi];
+                UINT32 minimiser_pos= minimiser_pos_base + contig._minimserinfo[minfoidx]->rel_pos[mi];
                 UINT16 c_dist = minimiser_pos - _rb;
                 UINT16 range_left = ((c_dist>(2*MINIMIZER_K))?(c_dist-(2*MINIMIZER_K)):(0));
                 UINT16 range_right = std::min(num_cbases,(UINT16)(c_dist+(3*MINIMIZER_K)));
@@ -424,6 +407,8 @@ void Alignment::prepare_short_arm(const UINT k, const UINT32 windex, const UINT3
                 size_t kmer_ind=0;
                 if (_apseq.find_kmer(anchor_kmer,k, search_start,search_end,false,kmer_ind)) { // found
                     q_beg = kmer_ind + k;
+                } else if (_apseq.find_kmer_with_one_tolerance(anchor_kmer, k, search_start, search_end, false, kmer_ind)) {
+                    q_beg = kmer_ind + k + 1;
                 }
                 else {valid = false;}
             }  
@@ -446,6 +431,8 @@ void Alignment::prepare_short_arm(const UINT k, const UINT32 windex, const UINT3
                 size_t kmer_ind=0;
                 if (_apseq.find_kmer(anchor_kmer, k,search_start,search_end,true,kmer_ind)) { // found
                     q_end = kmer_ind;
+                } else if (_apseq.find_kmer_with_one_tolerance(anchor_kmer, k,search_start,search_end,true,kmer_ind)) {
+                    q_end = kmer_ind;
                 }
                 else {valid = false;}
             }
@@ -467,6 +454,8 @@ void Alignment::prepare_short_arm(const UINT k, const UINT32 windex, const UINT3
                 size_t kmer_ind=0;
                 if (_apseq.find_kmer(prec_MIN,mk, search_start,search_end,false,kmer_ind)) { // found
                     q_beg = kmer_ind + mk;
+                } else if (_apseq.find_kmer_with_one_tolerance(prec_MIN,mk, search_start,search_end,false,kmer_ind)) {
+                    q_beg = kmer_ind + mk + 1;
                 }
                 else {valid = false;}
             }
@@ -487,6 +476,8 @@ void Alignment::prepare_short_arm(const UINT k, const UINT32 windex, const UINT3
                 UINT32 search_end = std::min(_qae,q_end+(3*mk));
                 size_t kmer_ind=0;
                 if (_apseq.find_kmer(succ_MIN, mk,search_start,search_end,true,kmer_ind)) { // found
+                    q_end = kmer_ind;
+                } else if (_apseq.find_kmer_with_one_tolerance(succ_MIN, mk,search_start,search_end,true,kmer_ind)) {
                     q_end = kmer_ind;
                 }
                 else {valid = false;}
