@@ -506,7 +506,8 @@ namespace hypo
     }
 
     UINT32 binary_search(const std::vector<UINT16>& v, UINT32 left, UINT32 right, const UINT32 target) {
-        while(left < right) {
+        int raw_right = right;
+        while(left < right && right <= raw_right) {
             UINT32 mid = (left + right) / 2;
             if (v[mid] == target) return mid;
             else if (v[mid] > target) right = mid - 1;
@@ -559,6 +560,7 @@ namespace hypo
         supp_minimisers.reserve(num_minimsers);
 
         find_division_points(supp_minimisers, supp_pos, _minimserinfo[minfoidx], 0, end-beg, 0, num_minimsers-1);
+        if (num_minimsers > 0) find_division_points(supp_minimisers, supp_pos, _minimserinfo[minfoidx], 0, end-beg, 0, num_minimsers-1);
         for (UINT32& p: supp_pos) {
             p += beg;
         }
